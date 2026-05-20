@@ -93,15 +93,21 @@ def compute_smile(calls_df, spot: float, T: float, r: float):
         # ----- Filter 1: skip if bid is too low (illiquid) -----
         if bid < MIN_BID:
             continue
+        # ----- Filter 2: skip strikes outside the liquid, informative range -----
+        # Deep ITM/OTM have tiny vega → IV inversion amplifies tiny price errors
+        # into huge IV noise. Industry convention: limit to ~0.85 ≤ K/S ≤ 1.15.
+        moneyness = strike / spot
+        if moneyness < 0.85 or moneyness > 1.15:
+            continue
 
-        # ----- Filter 2: skip if spread is too wide -----
+        # ----- Filter 3: skip if spread is too wide -----
         mid = (bid + ask) / 2
 
         spread_ratio = (ask - bid) / mid if mid > 0 else float("inf")
         if spread_ratio > MAX_SPREAD_RATIO:
             continue
 
-        # ----- Filter 3: skip prices outside arbitrage bounds -----
+        # ----- Filter 4: skip prices outside arbitrage bounds -----
         # The IV solver itself will raise ValueError if so; we catch and skip.
         try:
             iv = implied_vol_newton(
@@ -118,7 +124,7 @@ def compute_smile(calls_df, spot: float, T: float, r: float):
             # RuntimeError = solver failed to converge
             continue
 
-        # ----- Filter 4: drop absurd IV values (data errors) -----
+        # ----- Filter 5: drop absurd IV values (data errors) -----
         if iv < 0.01 or iv > 3.0:
             continue
 
@@ -181,14 +187,9 @@ if __name__ == "__main__":
     calls, spot, T = fetch_chain(TICKER, TARGET_DAYS_TO_EXPIRY)
 
     print(f"Number of calls in chain: {len(calls)}")
+    strikes, ivs = compute_smile(calls, spot, T, RISK_FREE_RATE)
 
-    strikes, ivs = compute_smile(
-        calls,
-        spot,
-        T,
-        RISK_FREE_RATE,
-    )
-
+    
     print(f"After filtering: {len(strikes)} viable strikes\n")
 
     if len(strikes) < 5:
